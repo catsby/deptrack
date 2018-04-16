@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -32,12 +31,14 @@ type Bar struct {
 	priority int
 	index    int
 
+	// the flag is set from Progress monitor goroutine only
+	completed bool
+
 	operateState chan func(*bState)
 	done         chan struct{}
 	shutdown     chan struct{}
-	once         sync.Once
 
-	// cacheState is used after done is closed
+	// it's guaranteed that cacheState isn't nil, after done is closed
 	cacheState *bState
 }
 
@@ -54,29 +55,30 @@ type (
 		trimLeftSpace        bool
 		trimRightSpace       bool
 		completed            bool
-		aborted              bool
+		removed              bool
 		dynamic              bool
 		startTime            time.Time
 		timeElapsed          time.Duration
 		blockStartTime       time.Time
 		timePerItem          time.Duration
-		appendFuncs          []decor.DecoratorFunc
-		prependFuncs         []decor.DecoratorFunc
+		aDecorators          []decor.DecoratorFunc
+		pDecorators          []decor.DecoratorFunc
 		refill               *refill
 		bufP, bufB, bufA     *bytes.Buffer
-		panic                string
+		panicMsg             string
 	}
 	refill struct {
 		char rune
 		till int64
 	}
-	bufReader struct {
+	renderedReader struct {
 		io.Reader
-		completed bool
+		toComplete bool
+		toRemove   bool
 	}
 )
 
-func newBar(id int, total int64, wg *sync.WaitGroup, cancel <-chan struct{}, options ...BarOption) *Bar {
+func newBar(id int, total int64, cancel <-chan struct{}, options ...BarOption) *Bar {
 	if total <= 0 {
 		total = time.Now().Unix()
 	}
@@ -102,16 +104,14 @@ func newBar(id int, total int64, wg *sync.WaitGroup, cancel <-chan struct{}, opt
 		shutdown:     make(chan struct{}),
 	}
 
-	go b.serve(s, wg, cancel)
+	go b.serve(s, cancel)
 	return b
 }
 
 // RemoveAllPrependers removes all prepend functions
 func (b *Bar) RemoveAllPrependers() {
 	select {
-	case b.operateState <- func(s *bState) {
-		s.prependFuncs = nil
-	}:
+	case b.operateState <- func(s *bState) { s.pDecorators = nil }:
 	case <-b.done:
 	}
 }
@@ -119,9 +119,7 @@ func (b *Bar) RemoveAllPrependers() {
 // RemoveAllAppenders removes all append functions
 func (b *Bar) RemoveAllAppenders() {
 	select {
-	case b.operateState <- func(s *bState) {
-		s.appendFuncs = nil
-	}:
+	case b.operateState <- func(s *bState) { s.aDecorators = nil }:
 	case <-b.done:
 	}
 }
@@ -148,6 +146,9 @@ func (b *Bar) IncrBy(n int) {
 	}
 	select {
 	case b.operateState <- func(s *bState) {
+		if s.completed {
+			return
+		}
 		next := time.Now()
 		if s.current == 0 {
 			s.startTime = next
@@ -179,9 +180,7 @@ func (b *Bar) ResumeFill(r rune, till int64) {
 		return
 	}
 	select {
-	case b.operateState <- func(s *bState) {
-		s.refill = &refill{r, till}
-	}:
+	case b.operateState <- func(s *bState) { s.refill = &refill{r, till} }:
 	case <-b.done:
 	}
 }
@@ -190,10 +189,10 @@ func (b *Bar) ResumeFill(r rune, till int64) {
 func (b *Bar) NumOfAppenders() int {
 	result := make(chan int, 1)
 	select {
-	case b.operateState <- func(s *bState) { result <- len(s.appendFuncs) }:
+	case b.operateState <- func(s *bState) { result <- len(s.aDecorators) }:
 		return <-result
 	case <-b.done:
-		return len(b.cacheState.appendFuncs)
+		return len(b.cacheState.aDecorators)
 	}
 }
 
@@ -201,10 +200,10 @@ func (b *Bar) NumOfAppenders() int {
 func (b *Bar) NumOfPrependers() int {
 	result := make(chan int, 1)
 	select {
-	case b.operateState <- func(s *bState) { result <- len(s.prependFuncs) }:
+	case b.operateState <- func(s *bState) { result <- len(s.pDecorators) }:
 		return <-result
 	case <-b.done:
-		return len(b.cacheState.prependFuncs)
+		return len(b.cacheState.pDecorators)
 	}
 }
 
@@ -253,75 +252,84 @@ func (b *Bar) SetTotal(total int64, final bool) {
 	}
 }
 
-// InProgress returns true, while progress is running.
-// Can be used as condition in for loop
-func (b *Bar) InProgress() bool {
+// Completed reports whether the bar is in completed state
+func (b *Bar) Completed() bool {
+	result := make(chan bool, 1)
 	select {
+	case b.operateState <- func(s *bState) { result <- s.completed }:
+		return <-result
 	case <-b.done:
-		return false
-	default:
-		return true
+		return b.cacheState.completed
 	}
 }
 
-// Complete stops bar's progress tracking, but doesn't remove the bar.
-// If you need to remove, call Progress.RemoveBar(*Bar) instead.
+// Complete stops bar's progress tracking, but doesn't remove the bar from rendering queue.
+// If you need to remove, invoke Progress.RemoveBar(*Bar) instead.
 func (b *Bar) Complete() {
-	b.once.Do(func() {
-		close(b.shutdown)
-	})
+	b.askToComplete(false)
 }
 
-func (b *Bar) serve(s *bState, wg *sync.WaitGroup, cancel <-chan struct{}) {
-	defer func() {
-		b.cacheState = s
-		close(b.done)
-		wg.Done()
-	}()
+func (b *Bar) askToComplete(toRemove bool) bool {
+	result := make(chan bool, 1)
+	select {
+	case b.operateState <- func(s *bState) {
+		s.removed = toRemove
+		s.completed = true
+		result <- true
+	}:
+		return <-result
+	case <-b.done:
+		return false
+	}
+}
+
+func (b *Bar) serve(s *bState, cancel <-chan struct{}) {
 	for {
 		select {
 		case op := <-b.operateState:
 			op(s)
 		case <-cancel:
-			s.aborted = true
-			return
+			s.completed = true
+			cancel = nil
 		case <-b.shutdown:
+			b.cacheState = s
+			close(b.done)
 			return
 		}
 	}
 }
 
-func (b *Bar) render(tw int, prependWs, appendWs *widthSync) <-chan *bufReader {
-	ch := make(chan *bufReader, 1)
+func (b *Bar) render(tw int, pSyncer, aSyncer *widthSyncer) <-chan *renderedReader {
+	ch := make(chan *renderedReader, 1)
 
 	go func() {
 		select {
 		case b.operateState <- func(s *bState) {
+			var r io.Reader
 			defer func() {
 				// recovering if external decorators panic
 				if p := recover(); p != nil {
-					s.panic = fmt.Sprintf("b#%02d panic: %v\n", s.id, p)
-					s.prependFuncs = nil
-					s.appendFuncs = nil
-
-					ch <- &bufReader{strings.NewReader(s.panic), true}
+					s.panicMsg = fmt.Sprintf("b#%02d panic: %v\n", s.id, p)
+					s.pDecorators = nil
+					s.aDecorators = nil
+					s.completed = true
+					r = strings.NewReader(s.panicMsg)
 				}
-				close(ch)
+				ch <- &renderedReader{r, s.completed, s.removed}
 			}()
-			s.draw(tw, prependWs, appendWs)
-			ch <- &bufReader{io.MultiReader(s.bufP, s.bufB, s.bufA), s.completed}
+			s.draw(tw, pSyncer, aSyncer)
+			r = io.MultiReader(s.bufP, s.bufB, s.bufA)
 		}:
 		case <-b.done:
 			s := b.cacheState
 			var r io.Reader
-			if s.panic != "" {
-				r = strings.NewReader(s.panic)
+			if s.panicMsg != "" {
+				r = strings.NewReader(s.panicMsg)
 			} else {
-				s.draw(tw, prependWs, appendWs)
+				s.draw(tw, pSyncer, aSyncer)
 				r = io.MultiReader(s.bufP, s.bufB, s.bufA)
 			}
-			ch <- &bufReader{r, false}
-			close(ch)
+			ch <- &renderedReader{r, s.completed, s.removed}
 		}
 	}()
 
@@ -335,7 +343,7 @@ func (s *bState) updateTimePerItemEstimate(amount int, now, next time.Time) {
 	s.blockStartTime = next
 }
 
-func (s *bState) draw(termWidth int, prependWs, appendWs *widthSync) {
+func (s *bState) draw(termWidth int, pSyncer, aSyncer *widthSyncer) {
 	if termWidth <= 0 {
 		termWidth = s.width
 	}
@@ -344,8 +352,8 @@ func (s *bState) draw(termWidth int, prependWs, appendWs *widthSync) {
 
 	// render prepend functions to the left of the bar
 	s.bufP.Reset()
-	for i, f := range s.prependFuncs {
-		s.bufP.WriteString(f(stat, prependWs.Listen[i], prependWs.Result[i]))
+	for i, f := range s.pDecorators {
+		s.bufP.WriteString(f(stat, pSyncer.Accumulator[i], pSyncer.Distributor[i]))
 	}
 
 	if !s.trimLeftSpace {
@@ -358,8 +366,8 @@ func (s *bState) draw(termWidth int, prependWs, appendWs *widthSync) {
 		s.bufA.WriteByte(' ')
 	}
 
-	for i, f := range s.appendFuncs {
-		s.bufA.WriteString(f(stat, appendWs.Listen[i], appendWs.Result[i]))
+	for i, f := range s.aDecorators {
+		s.bufA.WriteString(f(stat, aSyncer.Accumulator[i], aSyncer.Distributor[i]))
 	}
 
 	prependCount := utf8.RuneCount(s.bufP.Bytes())
@@ -425,7 +433,7 @@ func newStatistics(s *bState) *decor.Statistics {
 	return &decor.Statistics{
 		ID:                  s.id,
 		Completed:           s.completed,
-		Aborted:             s.aborted,
+		Removed:             s.removed,
 		Total:               s.total,
 		Current:             s.current,
 		StartTime:           s.startTime,

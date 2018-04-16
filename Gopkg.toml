@@ -35,7 +35,7 @@
 
 [[constraint]]
   name = "github.com/vbauerster/mpb"
-  version = "3.1.1"
+  revision = "c70540e23460a7f55687ae03cf946f3f5f6dc370"
 
 [[constraint]]
   branch = "master"

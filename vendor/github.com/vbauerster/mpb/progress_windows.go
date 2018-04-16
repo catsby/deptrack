@@ -11,24 +11,17 @@ import (
 )
 
 func (p *Progress) serve(s *pState) {
-
-	defer func() {
-		s.ticker.Stop()
-		p.cacheHeap = s.bHeap
-		close(p.done)
-		if s.shutdownNotifier != nil {
-			close(s.shutdownNotifier)
-		}
-	}()
-
 	var numP, numA int
-
 	for {
 		select {
 		case op := <-p.operateState:
 			op(s)
 		case <-s.ticker.C:
 			if s.bHeap.Len() == 0 {
+				if s.zeroWait {
+					close(p.done)
+					return
+				}
 				runtime.Gosched()
 				break
 			}
@@ -42,10 +35,22 @@ func (p *Progress) serve(s *pState) {
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
-		case <-s.cancel:
-			return
-		case <-p.shutdown:
-			return
+			var completed int
+			for i := 0; i < s.bHeap.Len(); i++ {
+				b := (*s.bHeap)[i]
+				if b.completed {
+					completed++
+				}
+			}
+			if completed == s.bHeap.Len() {
+				s.ticker.Stop()
+				s.waitAll()
+				if s.shutdownNotifier != nil {
+					close(s.shutdownNotifier)
+				}
+				close(p.done)
+				return
+			}
 		}
 	}
 }

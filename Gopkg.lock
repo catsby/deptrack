@@ -38,8 +38,7 @@
     "cwriter",
     "decor"
   ]
-  revision = "e227edc706423683a577a93c78beb0ce9d211b00"
-  version = "v3.1.1"
+  revision = "c70540e23460a7f55687ae03cf946f3f5f6dc370"
 
 [[projects]]
   branch = "master"
@@ -82,6 +81,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "cf6069dbe88bf1d94f453b5b6529319afd08d11738fd2f960db1af51e7b40dab"
+  inputs-digest = "945db74e556667a1781b8fc3669c0afefafeb71babf413e2372366cd92b6f20c"
   solver-name = "gps-cdcl"
   solver-version = 1
