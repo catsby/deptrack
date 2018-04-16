@@ -11,4 +11,4 @@ based on `vendor/vendor.json`
 - `$ go install`
 - `$ deptrack`
 
-
+![example](https://dl.dropboxusercontent.com/s/cjx40kvpfezmknh/deptrack.gif)
