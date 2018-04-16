@@ -20,8 +20,6 @@ import (
 )
 
 func main() {
-	fmt.Println("deptrack")
-
 	// TODO: accept cli argument
 	rInput := reposForOrgInput{
 		Name: "terraform-providers",
@@ -31,8 +29,6 @@ func main() {
 		fmt.Printf("Error: %s", err)
 		os.Exit(1)
 	}
-
-	// repos = repos[:5]
 
 	repoChan := make(chan *repoDepResult, len(repos))
 	resultsChan := make(chan *repoDepResult, len(repos))
@@ -71,14 +67,15 @@ func main() {
 		close(repoChan)
 	}()
 
-	fmt.Println("Running...")
+	fmt.Printf("Gathering dependencies for (%s)...\n", rInput.Name)
 	wg.Wait()
-	// p.Wait()
+	p.Wait()
 	close(resultsChan)
 	var results []*repoDepResult
 	for r := range resultsChan {
 		results = append(results, r)
 	}
+	bar.Complete()
 
 	depMap := make(map[string][]string)
 	for _, r := range results {
@@ -91,6 +88,7 @@ func main() {
 	}
 
 	// save to file
+	fmt.Println("Saving to 'dep_result.csv'...")
 	f, err := os.OpenFile("dep_result.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
 	if err != nil {
 		fmt.Printf("Error saving file: %s", err)
@@ -110,6 +108,7 @@ func main() {
 		}
 		f.WriteString(fmt.Sprintf("%s,%s\n", strings.Join(parts, ","), strings.Join(repos, ",")))
 	}
+	fmt.Println("Done!")
 }
 
 // repoDepResult stores information on a dependency
