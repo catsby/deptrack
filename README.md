@@ -1,10 +1,10 @@
 # deptrack
-## STATUS: experimental hack-job
+### STATUS: experimental hack-job
 
 A fun hack project to record the golang deps from an Organizations repositories
 based on `vendor/vendor.json`
 
-## Usage
+### Usage
 
 - requires `GITHUB_API_TOKEN`
 - `$ git checkout https://github.com/catsby/deptrack`
@@ -13,7 +13,7 @@ based on `vendor/vendor.json`
 
 ![usage](https://dl.dropboxusercontent.com/s/cjx40kvpfezmknh/deptrack.gif)
 
-## Output
+### Output
 
 Saves results in a comma seperated list to `dep_result.csv`. Format:
 
