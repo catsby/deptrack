@@ -95,7 +95,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer f.Close()
-
+	f.WriteString("Package,Revision,Version,Exact Version,Providers\n")
 	for k, repos := range depMap {
 		// fmt.Printf("%s,%s\n", k, strings.Join(repos, ","))
 		parts := make([]string, 4, 4)
