@@ -73,7 +73,7 @@ func main() {
 
 	fmt.Println("Running...")
 	wg.Wait()
-	p.Wait()
+	// p.Wait()
 	close(resultsChan)
 	var results []*repoDepResult
 	for r := range resultsChan {
@@ -85,7 +85,7 @@ func main() {
 		if r.Deps != nil && len(r.Deps.Packages) > 0 {
 			for _, d := range r.Deps.Packages {
 				key := d.String()
-				depMap[key] = append(depMap[key], r.FullName())
+				depMap[key] = append(depMap[key], r.RepoName())
 			}
 		}
 	}
@@ -100,7 +100,15 @@ func main() {
 
 	for k, repos := range depMap {
 		// fmt.Printf("%s,%s\n", k, strings.Join(repos, ","))
-		f.WriteString(fmt.Sprintf("%s,%s\n", k, strings.Join(repos, ",")))
+		parts := make([]string, 4, 4)
+		d := strings.Split(k, "::")
+		// key format:
+		// path::revision::version::version_exact
+		// where version and version exact may not exist
+		for i, s := range d {
+			parts[i] = s
+		}
+		f.WriteString(fmt.Sprintf("%s,%s\n", strings.Join(parts, ","), strings.Join(repos, ",")))
 	}
 }
 
@@ -114,6 +122,10 @@ type repoDepResult struct {
 
 func (r *repoDepResult) FullName() string {
 	return fmt.Sprintf("%s/%s", r.Org, r.Name)
+}
+
+func (r *repoDepResult) RepoName() string {
+	return fmt.Sprintf("%s", r.Name)
 }
 
 type vendorDeps struct {
@@ -132,12 +144,12 @@ type depPackage struct {
 }
 
 func (d *depPackage) String() string {
-	key := fmt.Sprintf("%s_%s", d.Path, d.Revision)
+	key := fmt.Sprintf("%s::%s", d.Path, d.Revision)
 	if d.Version != "" {
-		key = key + "_" + d.Version
+		key = key + "::" + d.Version
 	}
 	if d.VersionExact != "" {
-		key = key + "_" + d.VersionExact
+		key = key + "::" + d.VersionExact
 	}
 	return key
 }
@@ -148,7 +160,7 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 	for r := range repoChan {
 		// raw file url
 		// https://raw.githubusercontent.com/terraform-providers/terraform-provider-aws/master/vendor/vendor.json
-		url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/master/vendor/vendor.json", r.Org, r.Name)
+		url := fmt.Sprintf("https://raw.githubusercontent.com/%s/master/vendor/vendor.json", r.FullName())
 		// log.Printf("\nurl: %s\n", url)
 
 		// Submit the request
@@ -163,7 +175,7 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 
 		// Check the response
 		if resp.StatusCode != http.StatusOK {
-			r.err = fmt.Errorf("NotOK status for (%s/%s): %s", r.Org, r.Name, resp.Status)
+			r.err = fmt.Errorf("NotOK status for (%s): %s", r.FullName(), resp.Status)
 			bar.Increment()
 			resultsChan <- r
 			continue
@@ -172,7 +184,7 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 		var deps vendorDeps
 		if err := json.NewDecoder(resp.Body).Decode(&deps); err != nil {
 			resp.Body.Close()
-			log.Printf("\n\tfailed to parse response for (%s/%s): %s", r.Org, r.Name, err)
+			log.Printf("\n\tfailed to parse response for (%s): %s", r.FullName(), err)
 		}
 		resp.Body.Close()
 		r.Deps = &deps
