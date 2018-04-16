@@ -1,6 +1,14 @@
 # deptrack
+## STATUS: experimental
 
 A fun hack project to record the golang deps from an Organizations repositories
 based on `vendor/vendor.json`
 
-## STATUS: experimental
+## Usage
+
+- requires `GITHUB_API_TOKEN`
+- `$ git checkout https://github.com/catsby/deptrack`
+- `$ go install`
+- `$ deptrack`
+
+
