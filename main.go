@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +97,13 @@ func main() {
 	}
 	defer f.Close()
 	f.WriteString("Package,Revision,Version,Exact Version,Providers\n")
-	for k, repos := range depMap {
+	var keys []string
+	for k := range depMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		repos := depMap[k]
 		// fmt.Printf("%s,%s\n", k, strings.Join(repos, ","))
 		parts := make([]string, 4, 4)
 		d := strings.Split(k, "::")
@@ -106,6 +113,7 @@ func main() {
 		for i, s := range d {
 			parts[i] = s
 		}
+		sort.Strings(repos)
 		f.WriteString(fmt.Sprintf("%s,%s\n", strings.Join(parts, ","), strings.Join(repos, ",")))
 	}
 	fmt.Println("Done!")
