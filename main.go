@@ -111,6 +111,8 @@ Options:
 		os.Exit(1)
 	}
 
+	// fmt.Printf("\ndebug:\n%#v\n", filter)
+
 	repos, err := reposForOrg(&filter)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
@@ -195,8 +197,8 @@ Options:
 
 	if len(results) > 0 {
 		// save to file
-		fmt.Println("Saving to 'dep_result.csv'...")
-		f, err := os.OpenFile("dep_result.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
+		fmt.Println("Saving to 'dependencies.csv'...")
+		f, err := os.OpenFile("dependencies.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
 		if err != nil {
 			fmt.Printf("Error saving file: %s", err)
 			os.Exit(1)
