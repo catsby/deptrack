@@ -24,6 +24,7 @@ import (
 type searchFilter struct {
 	Organizations []string
 	Repositories  []string
+	Packages      []string
 	Limit         int
 	Concurrency   int
 	ShowErrs      bool
@@ -60,6 +61,7 @@ Options:
   -r, --repositories 	Crawl only these repositories (comman seperated list). Must be full name "org/repo"
   -l, --limit 		Limit number or repos to crawl. Default is to report on all repositories listed, or all found in the given organization
   -c, --concurrency 	Concurrency devel; default 10
+	-p, --packages 		Comma seperated list of packages to search for
   -e, --errors 		Flag to list repos that returned an error. Default false
   -h, --help 		Print this message. But you knew this by now
 `
@@ -82,6 +84,9 @@ Options:
 			}
 			if a == "-r" || a == "-repositories" {
 				filter.Repositories = strings.Split(args[i+1], ",")
+			}
+			if a == "-p" || a == "-packages" {
+				filter.Packages = strings.Split(args[i+1], ",")
 			}
 			if a == "-l" || a == "-limit" {
 				i, err := strconv.Atoi(args[i+1])
@@ -165,6 +170,7 @@ Options:
 			repoChan <- &repoDepResult{
 				FullName: *r.FullName,
 				Name:     *r.Name,
+				Packages: filter.Packages,
 			}
 		}
 		close(repoChan)
@@ -243,6 +249,7 @@ type repoDepResult struct {
 	FullName string
 	Name     string
 	Deps     *vendorDeps
+	Packages []string
 	err      error
 }
 
@@ -307,6 +314,19 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 			r.err = fmt.Errorf("\n\tfailed to parse response for (%s): %s", r.FullName, err)
 		}
 		resp.Body.Close()
+
+		// check if we're filtering packages
+		if len(r.Packages) > 0 {
+			var filteredDeps []depPackage
+			for _, p := range r.Packages {
+				for _, vp := range deps.Packages {
+					if strings.Contains(vp.Path, p) {
+						filteredDeps = append(filteredDeps, vp)
+					}
+				}
+			}
+			deps.Packages = filteredDeps
+		}
 		r.Deps = &deps
 
 		bar.Increment()
