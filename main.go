@@ -60,7 +60,7 @@ Options:
   -o, --organizations 	Crawl all repositories an organization. Comma seperated list. Default "terraform-providers"
   -r, --repositories 	Crawl only these repositories (comman seperated list). Must be full name "org/repo"
   -l, --limit 		Limit number or repos to crawl. Default is to report on all repositories listed, or all found in the given organization
-  -c, --concurrency 	Concurrency devel; default 10
+  -c, --concurrency 	Concurrency devel; Default 20
 	-p, --packages 		Comma seperated list of packages to search for
   -e, --errors 		Flag to list repos that returned an error. Default false
   -h, --help 		Print this message. But you knew this by now
@@ -69,7 +69,7 @@ Options:
 	// TODO: accept cli argument
 	filter := searchFilter{
 		Organizations: []string{"terraform-providers"},
-		Concurrency:   10,
+		Concurrency:   20,
 	}
 
 	args := os.Args[1:]
