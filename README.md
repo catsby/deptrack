@@ -6,7 +6,9 @@ based on `vendor/vendor.json`
 
 ### Usage
 
-- requires `GITHUB_API_TOKEN`
+Requires `GITHUB_API_TOKEN`, you can generate one here: https://github.com/settings/tokens
+
+- `$ export GITHHUB_API_TOKEN=******`
 - `$ git checkout https://github.com/catsby/deptrack`
 - `$ go install`
 - `$ deptrack`
