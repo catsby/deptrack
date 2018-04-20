@@ -13,7 +13,7 @@ Requires `GITHUB_API_TOKEN`, you can generate one here: https://github.com/setti
 - `$ go install`
 - `$ deptrack`
 
-![usage](https://dl.dropboxusercontent.com/s/cjx40kvpfezmknh/deptrack.gif)
+![usage](https://dl.dropboxusercontent.com/s/unxns5caki2h88s/deptrack_720.gif)
 
 ### Output
 
