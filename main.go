@@ -210,7 +210,7 @@ Options:
 			os.Exit(1)
 		}
 		defer f.Close()
-		f.WriteString("Package,Revision,Version,Exact Version,Providers\n")
+		f.WriteString("Package,Revision,Version,Exact Version,Count,Providers\n")
 		var keys []string
 		for k := range depMap {
 			keys = append(keys, k)
@@ -228,7 +228,7 @@ Options:
 				parts[i] = s
 			}
 			sort.Strings(repos)
-			f.WriteString(fmt.Sprintf("%s,%s\n", strings.Join(parts, ","), strings.Join(repos, ",")))
+			f.WriteString(fmt.Sprintf("%s,%d,%s\n", strings.Join(parts, ","), len(repos), strings.Join(repos, ",")))
 		}
 	}
 
