@@ -25,6 +25,7 @@ type searchFilter struct {
 	Organizations []string
 	Repositories  []string
 	Packages      []string
+	Match         string
 	Limit         int
 	Concurrency   int
 	ShowErrs      bool
@@ -59,16 +60,17 @@ Usage: deptrack [options]
 Options:
   -o, --organizations 	Crawl all repositories an organization. Comma seperated list. Default "terraform-providers"
   -r, --repositories 	Crawl only these repositories (comman seperated list). Must be full name "org/repo"
+  -m --match Crawl only repositories that contain this word
   -l, --limit 		Limit number or repos to crawl. Default is to report on all repositories listed, or all found in the given organization
   -c, --concurrency 	Concurrency devel; Default 20
 	-p, --packages 		Comma seperated list of packages to search for
   -e, --errors 		Flag to list repos that returned an error. Default false
-  -h, --help 		Print this message. But you knew this by now
+  -h, --help 		We all need it sometimes
 `
 
 	// TODO: accept cli argument
 	filter := searchFilter{
-		Organizations: []string{"terraform-providers"},
+		Organizations: []string{"hashicorp"},
 		Concurrency:   20,
 	}
 
@@ -130,7 +132,7 @@ Options:
 	}
 
 	if filter.Limit > 0 {
-		fmt.Println("Limiting to (%d) repositories", filter.Limit)
+		fmt.Printf("Limiting to (%d) repositories", filter.Limit)
 		repos = repos[:filter.Limit]
 	}
 
@@ -180,7 +182,7 @@ Options:
 	wg.Wait()
 	p.Wait()
 	close(resultsChan)
-	var results []*repoDepResult
+	results := make([]*repoDepResult, 0)
 	var errd []*repoDepResult
 	for r := range resultsChan {
 		if r.err != nil {
@@ -209,8 +211,10 @@ Options:
 			fmt.Printf("Error saving file: %s", err)
 			os.Exit(1)
 		}
-		defer f.Close()
-		f.WriteString("Package,Revision,Version,Exact Version,Count,Providers\n")
+		defer func() {
+			_ = f.Close()
+		}()
+		_, _ = f.WriteString("Package,Revision,Version,Exact Version,Count,Providers\n")
 		var keys []string
 		for k := range depMap {
 			keys = append(keys, k)
@@ -228,7 +232,7 @@ Options:
 				parts[i] = s
 			}
 			sort.Strings(repos)
-			f.WriteString(fmt.Sprintf("%s,%d,%s\n", strings.Join(parts, ","), len(repos), strings.Join(repos, ",")))
+			_, _ = f.WriteString(fmt.Sprintf("%s,%d,%s\n", strings.Join(parts, ","), len(repos), strings.Join(repos, ",")))
 		}
 	}
 
@@ -310,10 +314,10 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 
 		var deps vendorDeps
 		if err := json.NewDecoder(resp.Body).Decode(&deps); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			r.err = fmt.Errorf("\n\tfailed to parse response for (%s): %s", r.FullName, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// check if we're filtering packages
 		if len(r.Packages) > 0 {
