@@ -18,7 +18,6 @@ import (
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
-	"github.com/y0ssar1an/q"
 	"golang.org/x/mod/modfile"
 )
 
@@ -91,11 +90,6 @@ Options:
 				filter.Organizations = strings.Split(args[i+1], ",")
 			}
 			if a == "--csv" {
-				q.Q("--> --csv")
-				fileOut = true
-			}
-			if a == "-csv" {
-				q.Q("--> -csv")
 				fileOut = true
 			}
 			if a == "-r" || a == "-repositories" {
@@ -257,6 +251,7 @@ Options:
 				}
 			}
 
+			// TODO sort by result, have a struct or Sort methods
 			sort.Strings(repos)
 			_, _ = f.WriteString(fmt.Sprintf("%s%s%d%s%s\n", strings.Join(parts, ","), sep, len(repos), sep, strings.Join(repos, "; ")))
 		}
@@ -298,7 +293,7 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 		// Submit the request
 		resp, err := client.Get(url)
 		if err != nil {
-			r.err = fmt.Errorf("railed to GET (%s): %s", url, err)
+			r.err = fmt.Errorf("failed to GET (%s): %s", url, err)
 			bar.Increment()
 			resultsChan <- r
 			continue
@@ -306,9 +301,9 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 
 		// Check the response
 		if resp.StatusCode != http.StatusOK {
-			r.err = fmt.Errorf("%s", resp.Status)
+			// r.err = fmt.Errorf("%s", resp.Status)
 			bar.Increment()
-			resultsChan <- r
+			// resultsChan <- r
 			continue
 		}
 		defer func() {
@@ -355,19 +350,16 @@ func reposForOrg(filter *searchFilter) ([]*github.Repository, error) {
 	// hashicorp/terraform
 	var repos []*github.Repository
 	if len(filter.Repositories) > 0 {
-		q.Q("--> filtered by repos")
 		for _, repoStr := range filter.Repositories {
 			// TODO hard coded org[0] here
 			repo, _, err := client.Repositories.Get(ctx, filter.Organizations[0], repoStr)
 
 			if err != nil {
-				q.Q("--> error getting repo:", err)
 				return nil, fmt.Errorf("error getting Repository: %s", err)
 			}
 			repos = append(repos, repo)
 		}
 	} else {
-		q.Q("--> filtered by org")
 		for _, org := range filter.Organizations {
 			nopt := &github.RepositoryListByOrgOptions{}
 			for {
@@ -385,7 +377,6 @@ func reposForOrg(filter *searchFilter) ([]*github.Repository, error) {
 		}
 	}
 	if filter.Match != "" {
-		q.Q("--> --> match:", filter.Match)
 		var filtered []*github.Repository
 		for _, r := range repos {
 			if strings.Contains(*r.Name, filter.Match) {
@@ -393,9 +384,9 @@ func reposForOrg(filter *searchFilter) ([]*github.Repository, error) {
 			}
 		}
 		if len(filtered) > 0 {
-			q.Q("--> filterd out to %d repos", len(filtered))
 			repos = filtered
 		}
 	}
+
 	return repos, nil
 }
