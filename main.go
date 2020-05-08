@@ -26,7 +26,7 @@ import (
 type searchFilter struct {
 	Organizations []string
 	Repositories  []string
-	Packages      []string
+	Package       string
 	Match         string
 	Limit         int
 	Concurrency   int
@@ -65,10 +65,11 @@ Options:
   -m --match Crawl only repositories that contain this word
   -l, --limit 		Limit number or repos to crawl. Default is to report on all repositories listed, or all found in the given organization
   -c, --concurrency 	Concurrency devel; Default 20
-	-p, --packages 		Comma seperated list of packages to search for
+	-p, --package 		Search for a specific package
   -e, --errors 		Flag to list repos that returned an error. Default false
   -h, --help 		We all need it sometimes
 	-s, --sum  Read the go.sum files. The result is much more verbose 
+	--csv Output to csv
 `
 
 	// TODO: accept cli argument
@@ -76,6 +77,8 @@ Options:
 		Organizations: []string{"hashicorp"},
 		Concurrency:   20,
 	}
+
+	var fileOut bool
 
 	args := os.Args[1:]
 	if len(args) > 0 {
@@ -87,14 +90,22 @@ Options:
 			if a == "-o" || a == "-organizations" {
 				filter.Organizations = strings.Split(args[i+1], ",")
 			}
+			if a == "--csv" {
+				q.Q("--> --csv")
+				fileOut = true
+			}
+			if a == "-csv" {
+				q.Q("--> -csv")
+				fileOut = true
+			}
 			if a == "-r" || a == "-repositories" {
 				filter.Repositories = strings.Split(args[i+1], ",")
 			}
 			if a == "-m" || a == "-match" {
 				filter.Match = args[i+1]
 			}
-			if a == "-p" || a == "-packages" {
-				filter.Packages = strings.Split(args[i+1], ",")
+			if a == "-p" || a == "-package" {
+				filter.Package = args[i+1]
 			}
 			if a == "-l" || a == "-limit" {
 				i, err := strconv.Atoi(args[i+1])
@@ -123,8 +134,6 @@ Options:
 		fmt.Println("No organizations or repositories provided")
 		os.Exit(1)
 	}
-
-	q.Q("filter:", filter)
 
 	repos, err := reposForOrg(&filter)
 	if err != nil {
@@ -178,7 +187,7 @@ Options:
 			repoChan <- &repoDepResult{
 				FullName: *r.FullName,
 				Name:     *r.Name,
-				Packages: filter.Packages,
+				Package:  filter.Package,
 			}
 		}
 		close(repoChan)
@@ -212,15 +221,20 @@ Options:
 	if len(results) > 0 {
 		// save to file
 		fmt.Println("Saving to 'dependencies.csv'...")
-		f, err := os.OpenFile("dependencies.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
-		if err != nil {
-			fmt.Printf("Error saving file: %s", err)
-			os.Exit(1)
+		f := os.Stdout
+		sep := "\t"
+		if fileOut {
+			f, err = os.OpenFile("dependencies.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
+			if err != nil {
+				fmt.Printf("Error saving file: %s", err)
+				os.Exit(1)
+			}
+			defer func() {
+				_ = f.Close()
+			}()
+			sep = ","
 		}
-		defer func() {
-			_ = f.Close()
-		}()
-		_, _ = f.WriteString("Package,Revision,Count, Repositories\n")
+		_, _ = f.WriteString(fmt.Sprintf("Package%sRevision%sCount%sRepositories\n", sep, sep, sep))
 		var keys []string
 		for k := range depMap {
 			keys = append(keys, k)
@@ -233,11 +247,18 @@ Options:
 			d := strings.Split(k, "::")
 			// key format:
 			// package::version
+			// TODO this is not needed anymore
 			for i, s := range d {
 				parts[i] = s
 			}
+			if filter.Package != "" {
+				if !strings.Contains(parts[0], filter.Package) {
+					continue
+				}
+			}
+
 			sort.Strings(repos)
-			_, _ = f.WriteString(fmt.Sprintf("%s,%d,%s\n", strings.Join(parts, ","), len(repos), strings.Join(repos, "; ")))
+			_, _ = f.WriteString(fmt.Sprintf("%s%s%d%s%s\n", strings.Join(parts, ","), sep, len(repos), sep, strings.Join(repos, "; ")))
 		}
 	}
 
@@ -257,40 +278,13 @@ Options:
 type repoDepResult struct {
 	FullName string
 	Name     string
-	Deps     *vendorDeps
-	Packages []string
+	Package  string
 	err      error
 	mfile    *modfile.File
 }
 
 func (r *repoDepResult) RepoName() string {
 	return fmt.Sprintf("%s", r.Name)
-}
-
-type vendorDeps struct {
-	Comment  string
-	Ignore   string
-	Packages []depPackage `json:"package"`
-}
-
-type depPackage struct {
-	ChecksumSHA1 string
-	Path         string
-	Revision     string
-	RevisionTime string
-	Version      string
-	VersionExact string
-}
-
-func (d *depPackage) String() string {
-	key := fmt.Sprintf("%s::%s", d.Path, d.Revision)
-	if d.Version != "" {
-		key = key + "::" + d.Version
-	}
-	if d.VersionExact != "" {
-		key = key + "::" + d.VersionExact
-	}
-	return key
 }
 
 func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResult, resultsChan chan<- *repoDepResult) {
