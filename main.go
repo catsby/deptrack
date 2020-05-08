@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"sort"
@@ -14,10 +14,12 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v31/github"
 	cleanhttp "github.com/hashicorp/go-cleanhttp"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
+	"github.com/y0ssar1an/q"
+	"golang.org/x/mod/modfile"
 )
 
 // searchFilter is used to provide options when searching repos for an org.
@@ -66,6 +68,7 @@ Options:
 	-p, --packages 		Comma seperated list of packages to search for
   -e, --errors 		Flag to list repos that returned an error. Default false
   -h, --help 		We all need it sometimes
+	-s, --sum  Read the go.sum files. The result is much more verbose 
 `
 
 	// TODO: accept cli argument
@@ -86,6 +89,9 @@ Options:
 			}
 			if a == "-r" || a == "-repositories" {
 				filter.Repositories = strings.Split(args[i+1], ",")
+			}
+			if a == "-m" || a == "-match" {
+				filter.Match = args[i+1]
 			}
 			if a == "-p" || a == "-packages" {
 				filter.Packages = strings.Split(args[i+1], ",")
@@ -118,7 +124,7 @@ Options:
 		os.Exit(1)
 	}
 
-	// fmt.Printf("\ndebug:\n%#v\n", filter)
+	q.Q("filter:", filter)
 
 	repos, err := reposForOrg(&filter)
 	if err != nil {
@@ -195,9 +201,9 @@ Options:
 
 	depMap := make(map[string][]string)
 	for _, r := range results {
-		if r.Deps != nil && len(r.Deps.Packages) > 0 {
-			for _, d := range r.Deps.Packages {
-				key := d.String()
+		if r.mfile != nil {
+			for _, d := range r.mfile.Require {
+				key := fmt.Sprintf("%s::%s", d.Mod.Path, d.Mod.Version)
 				depMap[key] = append(depMap[key], r.RepoName())
 			}
 		}
@@ -214,7 +220,7 @@ Options:
 		defer func() {
 			_ = f.Close()
 		}()
-		_, _ = f.WriteString("Package,Revision,Version,Exact Version,Count,Providers\n")
+		_, _ = f.WriteString("Package,Revision,Count, Repositories\n")
 		var keys []string
 		for k := range depMap {
 			keys = append(keys, k)
@@ -223,16 +229,15 @@ Options:
 		for _, k := range keys {
 			repos := depMap[k]
 			// fmt.Printf("%s,%s\n", k, strings.Join(repos, ","))
-			parts := make([]string, 4, 4)
+			parts := make([]string, 2, 2)
 			d := strings.Split(k, "::")
 			// key format:
-			// path::revision::version::version_exact
-			// where version and version exact may not exist
+			// package::version
 			for i, s := range d {
 				parts[i] = s
 			}
 			sort.Strings(repos)
-			_, _ = f.WriteString(fmt.Sprintf("%s,%d,%s\n", strings.Join(parts, ","), len(repos), strings.Join(repos, ",")))
+			_, _ = f.WriteString(fmt.Sprintf("%s,%d,%s\n", strings.Join(parts, ","), len(repos), strings.Join(repos, "; ")))
 		}
 	}
 
@@ -255,6 +260,7 @@ type repoDepResult struct {
 	Deps     *vendorDeps
 	Packages []string
 	err      error
+	mfile    *modfile.File
 }
 
 func (r *repoDepResult) RepoName() string {
@@ -292,8 +298,8 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 	client := cleanhttp.DefaultClient()
 	for r := range repoChan {
 		// raw file url
-		// https://raw.githubusercontent.com/terraform-providers/terraform-provider-aws/master/vendor/vendor.json
-		url := fmt.Sprintf("https://raw.githubusercontent.com/%s/master/vendor/vendor.json", r.FullName)
+		// https://raw.githubusercontent.com/hashicorp/vault/master/go.mod
+		url := fmt.Sprintf("https://raw.githubusercontent.com/%s/master/go.mod", r.FullName)
 
 		// Submit the request
 		resp, err := client.Get(url)
@@ -311,27 +317,22 @@ func fetchVendor(wg *sync.WaitGroup, bar *mpb.Bar, repoChan <-chan *repoDepResul
 			resultsChan <- r
 			continue
 		}
-
-		var deps vendorDeps
-		if err := json.NewDecoder(resp.Body).Decode(&deps); err != nil {
+		defer func() {
 			_ = resp.Body.Close()
-			r.err = fmt.Errorf("\n\tfailed to parse response for (%s): %s", r.FullName, err)
+		}()
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			r.err = err
+			resultsChan <- r
+			continue
 		}
-		_ = resp.Body.Close()
-
-		// check if we're filtering packages
-		if len(r.Packages) > 0 {
-			var filteredDeps []depPackage
-			for _, p := range r.Packages {
-				for _, vp := range deps.Packages {
-					if strings.Contains(vp.Path, p) {
-						filteredDeps = append(filteredDeps, vp)
-					}
-				}
-			}
-			deps.Packages = filteredDeps
+		f, err := modfile.Parse("", data, nil)
+		if err != nil {
+			r.err = err
+			resultsChan <- r
+			continue
 		}
-		r.Deps = &deps
+		r.mfile = f
 
 		bar.Increment()
 		resultsChan <- r
@@ -359,19 +360,47 @@ func reposForOrg(filter *searchFilter) ([]*github.Repository, error) {
 	// get list of repositories across terraform-repositories, and add in
 	// hashicorp/terraform
 	var repos []*github.Repository
-	for _, org := range filter.Organizations {
-		nopt := &github.RepositoryListByOrgOptions{}
-		for {
-			part, resp, err := client.Repositories.ListByOrg(ctx, org, nopt)
+	if len(filter.Repositories) > 0 {
+		q.Q("--> filtered by repos")
+		for _, repoStr := range filter.Repositories {
+			// TODO hard coded org[0] here
+			repo, _, err := client.Repositories.Get(ctx, filter.Organizations[0], repoStr)
 
 			if err != nil {
-				return nil, fmt.Errorf("error listing Repositories: %s", err)
+				q.Q("--> error getting repo:", err)
+				return nil, fmt.Errorf("error getting Repository: %s", err)
 			}
-			repos = append(repos, part...)
-			if resp.NextPage == 0 {
-				break
+			repos = append(repos, repo)
+		}
+	} else {
+		q.Q("--> filtered by org")
+		for _, org := range filter.Organizations {
+			nopt := &github.RepositoryListByOrgOptions{}
+			for {
+				part, resp, err := client.Repositories.ListByOrg(ctx, org, nopt)
+
+				if err != nil {
+					return nil, fmt.Errorf("error listing Repositories: %s", err)
+				}
+				repos = append(repos, part...)
+				if resp.NextPage == 0 {
+					break
+				}
+				nopt.Page = resp.NextPage
 			}
-			nopt.Page = resp.NextPage
+		}
+	}
+	if filter.Match != "" {
+		q.Q("--> --> match:", filter.Match)
+		var filtered []*github.Repository
+		for _, r := range repos {
+			if strings.Contains(*r.Name, filter.Match) {
+				filtered = append(filtered, r)
+			}
+		}
+		if len(filtered) > 0 {
+			q.Q("--> filterd out to %d repos", len(filtered))
+			repos = filtered
 		}
 	}
 	return repos, nil
